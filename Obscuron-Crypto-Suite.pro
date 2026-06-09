@@ -2,6 +2,8 @@ QT += widgets
 
 CONFIG += c++17
 
+INCLUDEPATH += includes
+
 # You can make your code fail to compile if it uses deprecated APIs.
 # In order to do so, uncomment the following line.
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
@@ -9,15 +11,26 @@ CONFIG += c++17
 SOURCES += \
     main.cpp \
     mainwindow.cpp \
-    basic.cpp \
-    menuwindow.cpp
+    menuwindow.cpp \
+    src/basic_ciphers.cpp \
+    src/historical_ciphers.cpp \
+    src/essential_ciphers.cpp \
+    src/bruteforce_ciphers.cpp \
+    src/bytes.cpp \
+    src/standard_ciphers.cpp
 
 HEADERS += \
     colours.h \
     includes.h \
     mainwindow.h \
-    menuwindow.h
-    basic.h
+    menuwindow.h \
+    includes/basic.h \
+    includes/basic_ciphers.h \
+    includes/historical_ciphers.h \
+    includes/essential_ciphers.h \
+    includes/bruteforce_ciphers.h \
+    includes/bytes.h \
+    includes/standard_ciphers.h
 
 FORMS +=
 
