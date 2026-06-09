@@ -4,6 +4,7 @@
 #include <string>
 #include <iostream>
 
+extern char b[7][7];
 extern const char padding;
 extern const std::string alphabet;
 extern const std::string alphalphabet;
@@ -56,5 +57,12 @@ void big_endian_encode(long long val, std::string &out, int bytes);
 void little_endian_decode(const std::string &a, long long &out);
 void big_endian_decode(const std::string &a, long long &out);
 void a1z26(const std::string &a, std::string &out);
-
+void polybius_encrypt(std::string alphabet, std::string &a, std::string &out);
+void polybius_decrypt(std::string alphabet, std::string &a, std::string &out);
+void autokey(const std::string &a, const std::string &key, std::string &out, bool encrypt);
+void scytale_encrypt(const std::string &a, std::string &out, int m);
+void scytale_decrypt(const std::string &a, std::string &out, int m);
+void build_bifid_grid(std::string rows[5], char grid[6][6], int row_of[256], int col_of[256]);
+void bifid_encrypt(const std::string &msg, std::string &out, char grid[6][6], int row_of[256], int col_of[256]);
+void bifid_decrypt(const std::string &msg, std::string &out, char grid[6][6], int row_of[256], int col_of[256]);
 #endif // BASIC_H
