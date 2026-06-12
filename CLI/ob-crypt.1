@@ -1,0 +1,474 @@
+.TH OB-CRYPT 1 "June 2026" "ob-crypt" "User Commands"
+.SH NAME
+ob-crypt \- cryptographic toolkit for classical and modern ciphers
+.SH SYNOPSIS
+.B ob-crypt
+[\fIoptions\fR] \fIcipher\fR [\fIinput\fR] [\fIparameters\fR]
+.PP
+.B ob-crypt \-\-list
+.PP
+.B ob-crypt \-\-help
+.PP
+.B ob-crypt detect [\-\-top \fIN\fR] [\fIoptions\fR] \fIinput\fR
+.PP
+.B ob-crypt analyze [\fIoptions\fR] \fIinput\fR
+.PP
+.B ob-crypt chain \-\-steps \fIsteps\fR [\-\-detect] [\fIoptions\fR] \fIinput\fR
+.SH DESCRIPTION
+Obscuron Crypto Suite's command-line interface. Reads input from an inline
+argument, a file (\fB\-f\fR), or stdin and applies one of over 70 cipher
+operations. Designed for speed with zero external dependencies (only the C++
+standard library).
+.PP
+Output is printed to stdout. Combined with \fB\-\-hex\-input\fR and
+\fB\-\-hex\-output\fR, the tool operates seamlessly in a Unix pipeline.
+.SH GLOBAL OPTIONS
+.TP
+.B \-\-raw
+Machine-readable output \(em no labels or newlines.
+.TP
+.B \-\-hex\-input
+Decode input from hexadecimal before processing.
+.TP
+.B \-\-hex\-output
+Encode output as hexadecimal.
+.TP
+.B \-f \fIfile\fR
+Read input from \fIfile\fR (binary-safe).
+.TP
+.B \-
+Read input from standard input.
+.TP
+.B \-i \fIiv/nonce\fR
+IV, nonce, or initialization vector (hex-encoded for AES/ChaCha20).
+.TP
+.B \-s \fIsalt/separator/shift\fR
+Salt for KDFs, separator for A1Z26, or shift value for keyboard-shift/custom-rot.
+.TP
+.B \-\-iter \fIN\fR
+Iteration count for KDFs (PBKDF2, Argon2id).
+.TP
+.B \-\-mem \fIN\fR
+Memory cost in KB for Argon2id.
+.TP
+.B \-\-len \fIN\fR
+Output length for KDFs, period for Trifid, or byte count for endian encoding.
+.TP
+.B \-\-counter \fIN\fR
+Initial counter value for ChaCha20 (default 0).
+.TP
+.B \-\-secret \fItext\fR
+Secret message to embed (for lsb-embed).
+.TP
+.B \-\-max \fIN\fR
+Maximum key length for brute-force operations (default 10).
+.TP
+.B \-\-bits \fIN\fR
+Bits per character for proper-base encoding (6=base64, 5=base32, 4=hex).
+.SH SPECIAL MODES
+.TP
+.B \-\-list
+List all available cipher names, one per line.
+.TP
+.B detect [\-\-top \fIN\fR] \fIinput\fR
+Automatically detect which cipher was used. Returns top N candidates
+(default 3) with confidence scores, decrypted text, and detected key.
+.TP
+.B analyze \fIinput\fR
+Perform statistical analysis: detect encoding, compute length, Index of
+Coincidence (IoC), Shannon entropy, byte distribution, and letter
+frequencies.
+.TP
+.B chain \-\-steps \fIsteps\fR [\-\-detect] \fIinput\fR
+Multi-step pipeline. \fIsteps\fR is a comma-separated list of operations:
+.RS
+.TP
+.B base64
+Base64 decode.
+.TP
+.B base16, hex
+Hexadecimal decode.
+.TP
+.B caesar:\fIN\fR
+Caesar shift by N.
+.TP
+.B vigenere:\fIkey\fR
+Vigenere decrypt with \fIkey\fR.
+.RE
+.RS
+With \fB\-\-detect\fR, runs cipher detection on the pipeline result.
+Use \fB\-\-top\fR to control the number of candidates.
+.RE
+.SH CIPHER COMMANDS
+.SS "Basic Ciphers"
+.TP
+.B caesar [\-s \fIshift\fR] \fIinput\fR
+Caesar cipher. Shifts letters by \fIshift\fR (default 3). Negative
+values shift backward.
+.TP
+.B rot13 \fIinput\fR
+ROT13 \(em shift alphabet by 13 (self-inverse).
+.TP
+.B rot47 \fIinput\fR
+ROT47 \(em shift all printable ASCII (33\(en126) by 47.
+.SS "Hash Functions"
+.TP
+.B md5 \fIinput\fR
+MD5 cryptographic hash (128-bit / 16-byte digest).
+.TP
+.B sha1 \fIinput\fR
+SHA-1 cryptographic hash (160-bit / 20-byte digest).
+.TP
+.B sha256 \fIinput\fR
+SHA-256 cryptographic hash (256-bit / 32-byte digest).
+.TP
+.B sha512 \fIinput\fR
+SHA-512 cryptographic hash (512-bit / 64-byte digest).
+.TP
+.B blake2b [\-k \fIkey\fR] \fIinput\fR
+BLAKE2b hash. Optional key (\fB\-k\fR) turns it into a MAC.
+.TP
+.B blake2s [\-k \fIkey\fR] \fIinput\fR
+BLAKE2s hash (32-bit word variant). Optional key (\fB\-k\fR) turns it into a MAC.
+.SS "Additional Classical Ciphers"
+.TP
+.B a1z26 [\-s \fIseparator\fR] \fIinput\fR
+A1Z26 code \(em letters become their alphabet position (A=1, ..., Z=26). Default separator is \fB\-\fR.
+.TP
+.B bacon [\-\-decrypt] \fIinput\fR
+Baconian cipher \(em 5-bit binary encoding using A/B.
+.TP
+.B autokey \-k \fIkey\fR [\-\-decrypt] \fIinput\fR
+Autokey cipher \(em Vigenere variant where the key extends with plaintext.
+.TP
+.B beaufort \-k \fIkey\fR \fIinput\fR
+Beaufort cipher (reciprocal of Vigenere, self-inverse).
+.TP
+.B bifid [\-k \fIkey\fR] [\-\-decrypt] \fIinput\fR
+Bifid cipher \(em fractionating cipher using a 5x5 Polybius square. Default key is A-Z with I/J merged.
+.TP
+.B four-square \-k \fIkey1,key2\fR [\-\-decrypt] \fIinput\fR
+Four-square cipher \(em digraph substitution using two keys. Same key for both if no comma.
+.TP
+.B keyboard-shift \-s \fIshift\fR [\-\-decrypt] \fIinput\fR
+Shifts letters by N positions on a QWERTY keyboard layout.
+.TP
+.B keyword \-k \fIkeyword\fR [\-\-decrypt] \fIinput\fR
+Simple substitution using a keyword-constructed cipher alphabet.
+.TP
+.B morse [\-\-decrypt] \fIinput\fR
+Morse code encoding/decoding (dots and dashes).
+.TP
+.B polybius [\-k \fIalphabet\fR] [\-\-decrypt] \fIinput\fR
+Polybius square \(em maps letters to row/column coordinates (5x5, I/J merged).
+.TP
+.B scytale \-k \fIrows\fR [\-\-decrypt] \fIinput\fR
+Scytale transposition cipher \(em write in rows, read by columns.
+.TP
+.B substitution \-k \fI26\-\char key\fR [\-\-decrypt] \fIinput\fR
+Simple substitution cipher \(em 26-letter key maps A\(rarrfirst, B\(rarrsecond, etc.
+.TP
+.B substitution-solve \fIinput\fR
+Automatically solve a substitution cipher using frequency analysis. Outputs mapping and decrypted text.
+.TP
+.B trifid \-k \fIkey\fR [\-\-len \fIperiod\fR] [\-\-decrypt] \fIinput\fR
+Trifid cipher \(em 3D fractionating cipher on a 3x3x3 cube. Period defaults to 5.
+.TP
+.B adfgvx \-k \fIpolybius_key,col_key\fR [\-\-decrypt] \fIinput\fR
+ADFGVX cipher \(em fractionating cipher with 6x6 Polybius square and columnar transposition. Column key defaults to \fBADFGVX\fR.
+.TP
+.B binary [\-\-decrypt] \fIinput\fR
+Binary encoding \(em text to/from 8-bit binary strings.
+.TP
+.B braille [\-\-decrypt] \fIinput\fR
+Braille encoding \(em text to/from Braille Unicode characters.
+.TP
+.B octal [\-\-decrypt] \fIinput\fR
+Octal encoding \(em text to/from octal byte representation.
+.TP
+.B urlcode [\-\-decrypt] \fIinput\fR
+URL encoding/decoding \(em special characters as %XX hex sequences.
+.TP
+.B rot8000 [\-\-decrypt] \fIinput\fR
+ROT8000 \(em full Unicode rotation through the BMP.
+.TP
+.B custom-rot \-s \fIshift\fR \fIinput\fR
+Rotate all characters by N (negative for reverse).
+.TP
+.B des3 \-k \fIhex_key\fR [\-\-decrypt] \fIinput\fR
+Triple DES in ECB mode. Key is 24 bytes (48 hex chars).
+.TP
+.B hex-xor \-k \fIhex_byte\fR \fIinput\fR
+XOR each byte with a single hex byte (00\(enFF).
+.TP
+.B str-xor \-k \fIstring\fR \fIinput\fR
+XOR each byte with a repeating string key.
+.TP
+.B large \-b \fIbase\fR [\-\-decrypt] \fIinput\fR
+Big-integer base encode/decode (combines base_encode/base_decode).
+.SS "Historical / Classical Ciphers"
+.TP
+.B atbash \fIinput\fR
+Atbash substitution \(em reverse alphabet (A->Z, B->Y, ...).
+.TP
+.B affine \-a \fImult\fR \-b \fIoffset\fR [\-\-decrypt] \fIinput\fR
+Affine cipher \(em \fBE(x) = (mult * x + offset) mod 26\fR.
+\fImult\fR must be coprime to 26.
+.TP
+.B vigenere \-k \fIkey\fR [\-\-decrypt] \fIinput\fR
+Vigenere cipher \(em polyalphabetic substitution using \fIkey\fR as a
+repeating keyword.
+.TP
+.B playfair \-k \fIkey\fR [\-\-decrypt] \fIinput\fR
+Playfair cipher \(em digraph substitution on a 5x5 grid derived from
+\fIkey\fR. Treats I and J as the same letter.
+.TP
+.B columnar \-k \fIkey\fR [\-\-decrypt] [\-\-len \fIL\fR] \fIinput\fR
+Columnar transposition. Decryption requires \fB\-\-len\fR with the
+original plaintext length.
+.TP
+.B railfence \-k \fIrails\fR [\-\-offset \fIN\fR] \fIinput\fR
+Rail Fence zigzag transposition with \fIrails\fR rows and optional
+\fIoffset\fR.
+.TP
+.B enigma \-r \fIrotors\fR \-o \fIoffsets\fR [\-p \fIplugboard\fR] \fIinput\fR
+Enigma machine simulation. \fIrotors\fR and \fIoffsets\fR are
+comma-separated integers (e.g., "1,2,3" and "0,0,0").
+\fIplugboard\fR is colon-separated pairs: "0:1,2:3".
+.SS "Encoding / Essential Ciphers"
+.TP
+.B xor \-k \fIhex_key\fR \fIinput\fR
+XOR input bytes against \fIhex_key\fR (repeating). Specify the key as a
+hexadecimal string.
+.TP
+.B base_encode \-b \fIbase\fR \fIinput\fR
+Encode input as a big integer in \fIbase\fR (2\(en62). Uses O(1) memory.
+.TP
+.B base_decode \-b \fIbase\fR \fIinput\fR
+Decode a big-integer base string back to raw bytes. Expects
+lowercase letters for bases > 10.
+.SS "Stream & Block Ciphers"
+.TP
+.B rc4 \-k \fIkey\fR \fIinput\fR
+RC4 stream cipher (encrypt or decrypt \(em same operation).
+.TP
+.B des \-k \fIhex_key\fR [\-\-decrypt] \fIinput\fR
+DES block cipher in ECB mode. Key must be a hex string of exactly
+16 hex digits (8 bytes, 56 effective bits).
+.TP
+.B blowfish \-k \fIkey\fR [\-\-decrypt] \fIinput\fR
+Blowfish block cipher in ECB mode. Variable-length key (1\(en32 bytes).
+.SS "AES Block Cipher"
+.TP
+.B aes-ecb \-k \fIhex_key\fR [\-\-decrypt] \fIinput\fR
+AES in ECB mode. Key is 16, 24, or 32 bytes hex-encoded (32/48/64 hex chars). No IV.
+.TP
+.B aes-cbc \-k \fIhex_key\fR \-i \fIhex_iv\fR [\-\-decrypt] \fIinput\fR
+AES in CBC mode. IV must be 16 bytes (32 hex chars).
+.TP
+.B aes-ctr \-k \fIhex_key\fR \-i \fIhex_iv\fR [\-\-decrypt] \fIinput\fR
+AES in CTR mode. Encrypt and decrypt are the same XOR operation.
+.SS "ChaCha20 Stream Cipher"
+.TP
+.B chacha20 \-k \fIhex_key\fR \-i \fIhex_nonce\fR [\-\-counter \fIN\fR] \fIinput\fR
+ChaCha20 stream cipher. Key is 32 bytes (64 hex chars), nonce is 12 bytes (24 hex chars). Encrypt and decrypt are the same operation.
+.SS "Message Authentication"
+.TP
+.B hmac-sha256 \-k \fIkey\fR \fIinput\fR
+HMAC-SHA256 message authentication code.
+.TP
+.B hmac-sha512 \-k \fIkey\fR \fIinput\fR
+HMAC-SHA512 message authentication code.
+.TP
+.B poly1305 \-k \fIhex_key\fR \fIinput\fR
+Poly1305 one-time MAC. Key is 32 bytes (64 hex chars). Produces a 16-byte tag.
+.SS "Key Derivation"
+.TP
+.B pbkdf2 \-s \fIsalt\fR \-\-iter \fIN\fR \-\-len \fIN\fR \fIpassword\fR
+PBKDF2-HMAC-SHA256 key derivation.
+.TP
+.B argon2id \-s \fIsalt\fR \-\-iter \fIN\fR \-\-mem \fIN\fR \-\-len \fIN\fR \fIpassword\fR
+Argon2id key derivation (parallelism fixed to 1).
+.SS "Token, Image & Encoding"
+.TP
+.B jwt-sign \-k \fIkey\fR \fIpayload\fR
+Sign a JWT token. The same input is used as both header and payload JSON.
+.TP
+.B jwt-parse [\-k \fIkey\fR] \fItoken\fR
+Parse and verify a JWT token. Key is optional (skips verification if omitted).
+.TP
+.B qr \fIinput\fR
+Generate a text-based QR code (ASCII art grid).
+.TP
+.B lsb-embed \-\-secret \fItext\fR \fIcarrier\fR
+Embed secret text into raw RGBA/RGB image bytes via LSB steganography.
+.TP
+.B lsb-extract \fIinput\fR
+Extract hidden text from stego image bytes via LSB steganography.
+.SS "Brute-Force"
+.TP
+.B brute-rotate \fIinput\fR
+Try all 26 rotation shifts.
+.TP
+.B brute-caesar \fIinput\fR
+Try all 26 Caesar shifts.
+.TP
+.B brute-railfence [\-\-max \fIN\fR] \fIinput\fR
+Try Rail Fence ciphers with 2 to \fIN\fR rows (default 10).
+.TP
+.B brute-xor \fIinput\fR
+Try all 256 single-byte XOR keys.
+.TP
+.B brute-vigenere [\-\-max \fIN\fR] \fIinput\fR
+Try Vigenere decryption with key lengths 1 to \fIN\fR (default 10).
+.SS "Endian & Base Encoding"
+.TP
+.B little-endian [\-\-len \fIbytes\fR] \fIdecimal\fR
+Encode an integer in little-endian byte order (default 4 bytes).
+.TP
+.B big-endian [\-\-len \fIbytes\fR] \fIdecimal\fR
+Encode an integer in big-endian byte order (default 4 bytes).
+.TP
+.B proper-base \-\-bits \fIN\fR [\-k \fIalphabet\fR] \fIinput\fR
+Chunk-oriented base encoding that preserves leading zeros. \fB\-\-bits\fR 6=base64, 5=base32, 4=hex.
+.SH EXIT STATUS
+.TP
+0
+Success.
+.TP
+1
+Error \(em missing argument, unknown cipher, or I/O failure.
+.SH EXAMPLES
+.TP
+Caesar cipher (shift 7)
+.B echo "hello world" | ob-crypt caesar -s 7
+.TP
+Caesar cipher (default shift 3)
+.B ob-crypt caesar "khoor zruog"
+.TP
+ROT13
+.B ob-crypt rot13 "uryyb jbeyq"
+.TP
+Atbash
+.B ob-crypt atbash "svool dliow"
+.TP
+Vigenere encryption
+.B ob-crypt vigenere -k secret "hello world"
+.TP
+Vigenere decryption
+.B ob-crypt vigenere -k secret --decrypt "zincs pgvxi"
+.TP
+Affine cipher
+.B ob-crypt affine -a 5 -b 8 "hello"
+.TP
+Affine decryption
+.B ob-crypt affine -a 5 -b 8 --decrypt "rcllw"
+.TP
+Playfair
+.B ob-crypt playfair -k keyword "hello world"
+.TP
+Columnar transposition encrypt
+.B ob-crypt columnar -k zebra "attack at dawn"
+.TP
+Columnar transposition decrypt
+.B ob-crypt columnar -k zebra --decrypt --len 14 "tkc aatdtaw n a"
+.TP
+Rail Fence
+.B ob-crypt railfence -k 3 "hello world"
+.TP
+Enigma simulation
+.B ob-crypt enigma -r "1,2,3" -o "0,0,0" -p "0:1,2:3" "HELLO"
+.TP
+XOR with hex key
+.B ob-crypt xor -k "deadbeef" "plaintext"
+.TP
+RC4
+.B ob-crypt rc4 -k "key" "plaintext"
+.TP
+DES
+.B ob-crypt des -k "0123456789abcdef" --hex-output "plaintext"
+.TP
+Blowfish
+.B ob-crypt blowfish -k "secretkey" --decrypt --hex-input "$(cat cipher.hex)"
+.TP
+Base64 encode
+.B ob-crypt base_encode -b 64 "hello"
+.TP
+Base64 decode
+.B ob-crypt base_decode -b 64 "aGVsbG8="
+.TP
+Cipher detection
+.B ob-crypt detect --top 5 "uryyb jbeyq"
+.TP
+Statistical analysis
+.B ob-crypt analyze -f ciphertext.bin
+.TP
+Chain: base64 decode then hex decode
+.B ob-crypt chain --steps "base64,hex" "SGVsbG8="
+.TP
+Chain with auto-detect
+.B ob-crypt chain --steps "base64" --detect "SGVsbG8="
+.TP
+Input from file, output as hex
+.B ob-crypt \-\-hex\-output caesar \-f input.txt
+.TP
+Hex input from pipe
+.B echo "68656c6c6f" | ob-crypt \-\-hex\-input caesar \-
+.TP
+List all ciphers
+.B ob-crypt \-\-list
+.TP
+MD5 hash
+.B ob-crypt \-\-hex-output md5 "hello world"
+.TP
+AES-256-CBC encrypt
+.B ob-crypt aes-cbc -k "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" -i "0102030405060708090a0b0c0d0e0f10" "plaintext"
+.TP
+AES-256-CBC decrypt
+.B ob-crypt aes-cbc --decrypt -k "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" -i "0102030405060708090a0b0c0d0e0f10" --hex-input "$(ob-crypt aes-cbc -k "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" -i "0102030405060708090a0b0c0d0e0f10" "plaintext")"
+.TP
+ChaCha20 encrypt
+.B ob-crypt chacha20 -k "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" -i "0102030405060708090a0b0c" "hello"
+.TP
+PBKDF2 key derivation
+.B ob-crypt pbkdf2 -s "mysalt" --iter 100000 --len 32 "mypassword"
+.TP
+Sign a JWT
+.B ob-crypt jwt-sign -k secret '{"sub":"123"}'
+.TP
+Single-byte XOR brute-force
+.B ob-crypt brute-xor --hex-input "$(echo -n 'Hello' | ob-crypt xor -k '1b')"
+.SH CIPHER INDEX
+The following ciphers are available via
+.BR "ob-crypt \-\-list" :
+.PP
+.ad l
+.nf
+a1z26        adfgvx       aes-cbc      aes-ctr      aes-ecb
+affine       analyze      argon2id     atbash       autokey
+bacon        base_decode  base_encode  beaufort     bifid
+big-endian   binary       blake2b      blake2s      blowfish
+braille      brute-caesar brute-railfence brute-rotate brute-vigenere
+brute-xor    caesar       chain        chacha20     columnar
+custom-rot   des          des3         detect       enigma
+four-square  hex-xor      hmac-sha256  hmac-sha512  jwt-parse
+jwt-sign     keyboard-shift keyword     large        little-endian
+lsb-embed    lsb-extract  md5          morse        octal
+pbkdf2       playfair     poly1305     polybius     proper-base
+qr           railfence    rc4          rot13        rot47
+rot8000      scytale      sha1         sha256       sha512
+str-xor      substitution substitution-solve trifid  urlcode
+vigenere     xor
+.fi
+.ad
+.PP
+The names listed above follow the CLI names for the cipher operations
+documented in this man page.
+.SH BUGS
+Report bugs to the Obscuron-Crypto-Toolkit issue tracker on GitHub.
+.SH AUTHOR
+Obscuron <https://github.com/PRSro/Obscuron-Crypto-Toolkit>
+.SH SEE ALSO
+.BR openssl (1),
+.BR xxd (1),
+.BR base64 (1)
