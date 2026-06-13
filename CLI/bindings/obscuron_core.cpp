@@ -9,6 +9,9 @@ namespace py = pybind11;
 #include "../includes/standard_ciphers.h"
 #include "../includes/outdated_ciphers.h"
 #include "../includes/bruteforce_ciphers.h"
+#include "../includes/modern_ciphers.h"
+#include "../includes/detector.h"
+#include "../includes/context.h"
 
 PYBIND11_MODULE(_obscuron_core, m) {
     m.doc() = "Obscuron Crypto Suite — C++ accelerated cipher library";
@@ -276,6 +279,161 @@ PYBIND11_MODULE(_obscuron_core, m) {
         return result;
     });
     m.def("brute_vigenere_keylength", &brute_vigenere_keylength);
+
+    // ── modern_ciphers (hashes) ──
+
+    m.def("md5_hash", [](const std::string &text) {
+        std::string out; md5_hash(text, out); return out;
+    }, py::arg("text"));
+    m.def("sha1_hash", [](const std::string &text) {
+        std::string out; sha1_hash(text, out); return out;
+    }, py::arg("text"));
+    m.def("sha256_hash", [](const std::string &text) {
+        std::string out; sha256_hash(text, out); return out;
+    }, py::arg("text"));
+    m.def("sha512_hash", [](const std::string &text) {
+        std::string out; sha512_hash(text, out); return out;
+    }, py::arg("text"));
+    m.def("blake2b_hash", [](const std::string &text, const std::string &key) {
+        std::string out; blake2b_hash(text, out, key); return out;
+    }, py::arg("text"), py::arg("key") = "");
+    m.def("blake2s_hash", [](const std::string &text, const std::string &key) {
+        std::string out; blake2s_hash(text, out, key); return out;
+    }, py::arg("text"), py::arg("key") = "");
+    m.def("hmac_sha256", [](const std::string &text, const std::string &key) {
+        std::string out; hmac_sha256(text, key, out); return out;
+    }, py::arg("text"), py::arg("key"));
+    m.def("hmac_sha512", [](const std::string &text, const std::string &key) {
+        std::string out; hmac_sha512(text, key, out); return out;
+    }, py::arg("text"), py::arg("key"));
+
+    // ── modern_ciphers (symmetric) ──
+
+    m.def("aes_encrypt", [](const py::bytes &input, const py::bytes &key, const py::bytes &iv, int mode) -> py::bytes {
+        std::string out;
+        if (!aes_encrypt(std::string(input), std::string(key), std::string(iv), mode, out))
+            throw py::value_error("AES operation failed");
+        return py::bytes(out);
+    }, py::arg("input"), py::arg("key"), py::arg("iv"), py::arg("mode"));
+    m.def("aes_decrypt", [](const py::bytes &input, const py::bytes &key, const py::bytes &iv, int mode) -> py::bytes {
+        std::string out;
+        if (!aes_decrypt(std::string(input), std::string(key), std::string(iv), mode, out))
+            throw py::value_error("AES operation failed");
+        return py::bytes(out);
+    }, py::arg("input"), py::arg("key"), py::arg("iv"), py::arg("mode"));
+    m.def("chacha20_crypt", [](const py::bytes &input, const py::bytes &key, const py::bytes &nonce, uint32_t counter) -> py::bytes {
+        std::string out;
+        chacha20_crypt(std::string(input), std::string(key), std::string(nonce), counter, out);
+        return py::bytes(out);
+    }, py::arg("input"), py::arg("key"), py::arg("nonce"), py::arg("counter") = 0);
+    m.def("poly1305_mac", [](const py::bytes &input, const py::bytes &key) -> py::bytes {
+        std::string out;
+        poly1305_mac(std::string(input), std::string(key), out);
+        return py::bytes(out);
+    }, py::arg("input"), py::arg("key"));
+
+    // ── modern_ciphers (KDF) ──
+
+    m.def("pbkdf2_sha256", [](const std::string &password, const std::string &salt, uint32_t iterations, uint32_t length) -> py::bytes {
+        std::string out;
+        pbkdf2_sha256(password, salt, iterations, length, out);
+        return py::bytes(out);
+    }, py::arg("password"), py::arg("salt"), py::arg("iterations"), py::arg("length"));
+    m.def("argon2id_hash", [](const std::string &password, const std::string &salt, uint32_t iterations, uint32_t memory_kb, uint32_t length, uint32_t parallelism) -> py::bytes {
+        std::string out;
+        if (!argon2id_hash(password, salt, iterations, memory_kb, parallelism, length, out))
+            throw std::runtime_error("argon2id failed");
+        return py::bytes(out);
+    }, py::arg("password"), py::arg("salt"), py::arg("iterations"), py::arg("memory_kb"), py::arg("length"), py::arg("parallelism") = 1);
+
+    // ── modern_ciphers (JWT) ──
+
+    m.def("jwt_sign", [](const std::string &header, const std::string &payload, const std::string &key) {
+        return jwt_sign(header, payload, key);
+    }, py::arg("header"), py::arg("payload"), py::arg("key"));
+    m.def("jwt_parse", [](const std::string &token, const std::string &key) -> py::dict {
+        JwtToken tok = jwt_parse(token, key);
+        py::dict d;
+        d["header"] = tok.header;
+        d["payload"] = tok.payload;
+        d["signature"] = tok.signature;
+        d["valid"] = tok.signature_valid;
+        return d;
+    }, py::arg("token"), py::arg("key") = "");
+
+    // ── modern_ciphers (QR) ──
+
+    m.def("generate_qr_matrix", [](const std::string &text) -> py::list {
+        auto matrix = generate_qr_matrix(text);
+        py::list result;
+        for (auto &row : matrix) {
+            py::list row_list;
+            for (bool val : row) row_list.append(val);
+            result.append(row_list);
+        }
+        return result;
+    }, py::arg("text"));
+
+    // ── modern_ciphers (stego) ──
+
+    m.def("lsb_embed", [](const py::bytes &carrier, const std::string &secret) -> py::bytes {
+        std::string out;
+        if (!lsb_embed(std::string(carrier), secret, out))
+            throw std::runtime_error("lsb_embed failed");
+        return py::bytes(out);
+    }, py::arg("carrier"), py::arg("secret"));
+    m.def("lsb_extract", [](const py::bytes &data) -> std::string {
+        std::string out;
+        if (!lsb_extract(std::string(data), out))
+            throw std::runtime_error("lsb_extract failed");
+        return out;
+    }, py::arg("data"));
+
+    // ── encoding helpers ──
+
+    m.def("hex_decode_str", [](const std::string &hex) -> py::bytes {
+        return py::bytes(hex_decode_str(hex));
+    }, py::arg("hex"));
+    m.def("base64_encode", [](const std::string &in) {
+        return base64_encode(in);
+    }, py::arg("text"));
+    m.def("base64_decode", [](const std::string &in) {
+        return base64_decode(in);
+    }, py::arg("text"));
+    m.def("base64url_encode", [](const std::string &in) {
+        return base64url_encode(in);
+    }, py::arg("text"));
+    m.def("base64url_decode", [](const std::string &in) {
+        return base64url_decode(in);
+    }, py::arg("text"));
+
+    // ── detector ──
+
+    m.def("score_english", [](const std::string &text) -> double {
+        return score_english(text);
+    }, py::arg("text"));
+    m.def("compute_entropy", [](const std::string &input) -> double {
+        return compute_entropy(input);
+    }, py::arg("input"));
+    m.def("compute_ioc", [](const std::string &input) -> double {
+        return compute_ioc(input);
+    }, py::arg("input"));
+    m.def("sniff_encoding", [](const std::string &input) -> std::string {
+        return sniff_encoding(input);
+    }, py::arg("input"));
+    m.def("detect_cipher", [](const std::string &text, int top_n) -> py::list {
+        auto results = detect_cipher(text, top_n);
+        py::list out;
+        for (auto &c : results) {
+            py::dict d;
+            d["cipher"] = c.cipher_name;
+            d["decrypted"] = c.decrypted;
+            d["key"] = c.key;
+            d["confidence"] = c.confidence;
+            out.append(d);
+        }
+        return out;
+    }, py::arg("text"), py::arg("top_n") = 3);
 
     // module-level constants
     m.attr("padding") = py::str(std::string(1, padding));

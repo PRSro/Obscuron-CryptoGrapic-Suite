@@ -19,7 +19,10 @@ SOURCES += \
     theme_manager.cpp \
     advanced_number_dialog.cpp \
     advanced_crypt_dialog.cpp \
+    rsa_attack_dialog.cpp \
+    tls_attack_dialog.cpp \
     ../CLI/src/modern_ciphers.cpp \
+    ../CLI/src/ntl_bridge.cpp \
     ../CLI/src/basic_ciphers.cpp \
     ../CLI/src/historical_ciphers.cpp \
     ../CLI/src/essential_ciphers.cpp \
@@ -27,7 +30,8 @@ SOURCES += \
     ../CLI/src/bytes.cpp \
     ../CLI/src/standard_ciphers.cpp \
     ../CLI/src/outdated_ciphers.cpp \
-    ../CLI/src/detector.cpp
+    ../CLI/src/detector.cpp \
+    ../CLI/src/bigint.cpp
 
 HEADERS += \
     colours.h \
@@ -40,6 +44,8 @@ HEADERS += \
     theme_manager.h \
     advanced_number_dialog.h \
     advanced_crypt_dialog.h \
+    rsa_attack_dialog.h \
+    tls_attack_dialog.h \
     ../CLI/includes/modern_ciphers.h \
     ../CLI/includes/basic.h \
     ../CLI/includes/basic_ciphers.h \
@@ -49,7 +55,9 @@ HEADERS += \
     ../CLI/includes/bytes.h \
     ../CLI/includes/standard_ciphers.h \
     ../CLI/includes/outdated_ciphers.h \
-    ../CLI/includes/detector.h
+    ../CLI/includes/detector.h \
+    ../CLI/includes/ntl_bridge.h \
+    ../CLI/includes/bigint.hpp
 
 FORMS +=
 

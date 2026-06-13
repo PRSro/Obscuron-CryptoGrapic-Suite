@@ -308,10 +308,13 @@ Extract hidden text from stego image bytes via LSB steganography.
 .SS "Brute-Force"
 .TP
 .B brute-rotate \fIinput\fR
-Try all 26 rotation shifts.
+Try all 26 rotation shifts (0\(en25), including identity. Outputs
+\fIshift: result\fR on each line. Use for generic rotation search.
 .TP
 .B brute-caesar \fIinput\fR
-Try all 26 Caesar shifts.
+Try all 25 Caesar shifts (1\(en25) with multi-threaded execution.
+Outputs \fIshift: result\fR. Traditional Caesar brute force without
+the identity shift.
 .TP
 .B brute-railfence [\-\-max \fIN\fR] \fIinput\fR
 Try Rail Fence ciphers with 2 to \fIN\fR rows (default 10).
@@ -321,6 +324,73 @@ Try all 256 single-byte XOR keys.
 .TP
 .B brute-vigenere [\-\-max \fIN\fR] \fIinput\fR
 Try Vigenere decryption with key lengths 1 to \fIN\fR (default 10).
+.SS "RSA Attacks & Utilities (requires NTL)"
+.TP
+.B rsa-decrypt \-c \fIvalue\fR \-d \fIvalue\fR \-n \fIvalue\fR
+RSA decrypt: \fIm = c^d mod n\fR. All values accept hex (with or
+without 0x prefix) or decimal.
+.TP
+.B rsa-wiener \-e \fIvalue\fR \-n \fIvalue\fR [\-c \fIvalue\fR]
+Wiener's continued-fraction attack on RSA with small private exponent
+\fId\fR. Outputs recovered \fId\fR, \fIp\fR, \fIq\fR. If \fB\-c\fR is
+given, also decrypts via CRT.
+.TP
+.B rsa-hastad \-e \fIN\fR \-\-ciphertexts \fIcsv\fR \-\-moduli \fIcsv\fR
+Hastad's broadcast attack. Recovers plaintext from \fIe\fR identical
+encryptions under different moduli. Ciphertexts and moduli as comma-
+separated hex values.
+.TP
+.B rsa-common-modulus \-n \fIvalue\fR \-e1 \fIvalue\fR \-e2 \fIvalue\fR \-c1 \fIvalue\fR \-c2 \fIvalue\fR
+Recovers plaintext from two ciphertexts encrypted under the same
+modulus \fIn\fR with coprime exponents \fIe1\fR, \fIe2\fR.
+.TP
+.B rsa-factor-fermat \-n \fIvalue\fR
+Fermat factorization when the two primes \fIp\fR and \fIq\fR are
+close together (\fI|p \- q| < n^{1/4}\fR). Up to 100000 iterations.
+.TP
+.B rsa-factor-pollard \-n \fIvalue\fR
+Pollard's Rho heuristic factorization. Finds one non-trivial factor
+of composite \fIn\fR using Floyd's cycle detection.
+.TP
+.B rsa-parity-oracle \-n \fIvalue\fR \-e \fIvalue\fR \-c \fIvalue\fR \-\-oracle \fIcommand\fR [\-\-timeout \fIms\fR]
+Bleichenbacher-style LSB parity oracle attack. Pipes each query
+ciphertext to \fIcommand\fR; expects \fB0\fR (even) or \fB1\fR (odd)
+on stdout. Default timeout: 5000ms per query.
+.TP
+.B rsa-encode \-e \fIvalue\fR \-n \fIvalue\fR \fIinput\fR
+RSA encrypt a plaintext string: \fIc = m^e mod n\fR. Converts each
+character to its byte value, packs as a big integer, and exponentiates.
+.TP
+.B rsa-info \-n \fIvalue\fR [\-e \fIvalue\fR]
+Analyze an RSA public key. Shows key size in bits, exponent quality
+assessment (Hastad risk, small-exponent warning, non-standard large
+exponent), Wiener attack feasibility estimate, trivial factor checks
+(divisible by 3 or 5), and overall factorization difficulty.
+.SS "Elliptic Curve Arithmetic (NTL)"
+.TP
+.B ec-add \-\-x1 \fIhex\fR \-\-y1 \fIhex\fR \-\-x2 \fIhex\fR \-\-y2 \fIhex\fR \-\-a \fIhex\fR \-\-p \fIhex\fR
+Elliptic curve point addition on \fIy^2 = x^3 + ax + b\fR (mod \fIp\fR).
+Input and output as hex strings.
+.TP
+.B ec-mul \-\-k \fIhex\fR \-\-x \fIhex\fR \-\-y \fIhex\fR \-\-a \fIhex\fR \-\-p \fIhex\fR
+Elliptic curve scalar multiplication: \fIk * P\fR on
+\fIy^2 = x^3 + ax + b\fR (mod \fIp\fR).
+.SS "Discrete Logarithm (NTL)"
+.TP
+.B dlp-bsgs \-\-g \fIhex\fR \-\-h \fIhex\fR \-\-p \fIhex\fR
+Baby-step giant-step discrete logarithm solver. Finds \fIx\fR such
+that \fIg^x = h\fR (mod \fIp\fR). Time-memory tradeoff:
+\fIO(sqrt(n))\fR.
+.TP
+.B dlp-pohlig \-\-g \fIhex\fR \-\-h \fIhex\fR \-\-p \fIhex\fR
+Pohlig-Hellman DLP solver. Exploits smooth group order by solving
+each prime-power subgroup via BSGS, then combining with CRT.
+.SS "Lattice Reduction (NTL)"
+.TP
+.B lll \-\-matrix \fIjson\fR
+LLL lattice reduction. Accepts a matrix in JSON-like format
+\fB[[a,b],[c,d]]\fR. Outputs the reduced basis in the same format.
+Uses NTL's floating-point LLL (FP variant) for speed.
 .SS "Endian & Base Encoding"
 .TP
 .B little-endian [\-\-len \fIbytes\fR] \fIdecimal\fR
@@ -450,13 +520,16 @@ bacon        base_decode  base_encode  beaufort     bifid
 big-endian   binary       blake2b      blake2s      blowfish
 braille      brute-caesar brute-railfence brute-rotate brute-vigenere
 brute-xor    caesar       chain        chacha20     columnar
-custom-rot   des          des3         detect       enigma
-four-square  hex-xor      hmac-sha256  hmac-sha512  jwt-parse
-jwt-sign     keyboard-shift keyword     large        little-endian
+custom-rot   des          des3         detect       dlp-bsgs
+dlp-pohlig   ec-add       ec-mul       enigma       four-square
+hex-xor      hmac-sha256  hmac-sha512  jwt-parse    jwt-sign
+keyboard-shift keyword     lll          large        little-endian
 lsb-embed    lsb-extract  md5          morse        octal
 pbkdf2       playfair     poly1305     polybius     proper-base
 qr           railfence    rc4          rot13        rot47
-rot8000      scytale      sha1         sha256       sha512
+rot8000      rsa-common-modulus rsa-decrypt rsa-encode
+rsa-factor-fermat rsa-factor-pollard rsa-hastad rsa-info rsa-parity-oracle
+rsa-wiener   scytale      sha1         sha256       sha512
 str-xor      substitution substitution-solve trifid  urlcode
 vigenere     xor
 .fi

@@ -91,6 +91,8 @@ private slots:
     void onUndo();
     void onRedo();
     
+    void onDetectCipher();
+    
     // Macro and recipe templates
     void onApplyMacro();
     void onSaveRecipe();
@@ -100,6 +102,7 @@ private slots:
     // CTF mode
     void onRunCtfSearch();
     void onCtfFlagCheck();
+    void onRunTlsAttack();
 
 private:
     void setupUI();

@@ -57,4 +57,40 @@ std::vector<std::vector<bool>> generate_qr_matrix(const std::string &text);
 bool lsb_extract(const std::string &carrier_data, std::string &extracted_text);
 bool lsb_embed(const std::string &carrier_data, const std::string &text_to_embed, std::string &stego_data);
 
+// ── TLS / SSL Structures ─────────────────────────────────────────
+
+struct TlsFingerprint {
+    std::string version;
+    std::string key_exchange;
+    std::string cipher;
+    std::string mac;
+    int key_bits = 0;
+    bool is_pem = false;
+    bool is_der = false;
+    bool has_pkcs1_padding = false;
+    std::vector<std::string> risk_flags;
+    std::string suggested_attack;
+};
+
+struct CertInfo {
+    std::string subject_cn;
+    std::string subject_o;
+    std::string issuer;
+    std::string valid_from;
+    std::string valid_until;
+    std::string pubkey_algo;
+    int pubkey_bits = 0;
+    std::string serial_hex;
+    std::string sha256_fingerprint;
+    std::string modulus_hex;
+    std::string exponent_hex;
+    std::vector<std::string> san_entries;
+    std::vector<std::string> key_usage;
+    bool is_expired = false;
+    bool is_self_signed = false;
+};
+
+TlsFingerprint tls_fingerprint(const std::string &input);
+CertInfo parse_certificate(const std::string &pem_or_hex);
+
 #endif // MODERN_CIPHERS_H

@@ -9,7 +9,8 @@ bool ntl_rsa_decrypt(const std::string &c_hex, const std::string &d_hex,
                      std::string &error_msg);
 
 bool ntl_rsa_wiener(const std::string &e_hex, const std::string &n_hex,
-                    std::string &d_hex, std::string &error_msg);
+                    std::string &d_hex, std::string &p_hex, std::string &q_hex,
+                    std::string &error_msg);
 
 bool ntl_rsa_hastad(const std::vector<std::string> &c_hex_list,
                     const std::vector<std::string> &n_hex_list, int e,

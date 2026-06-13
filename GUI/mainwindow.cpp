@@ -5,6 +5,7 @@
 #include "visualizer_widgets.h"
 #include "modern_ciphers.h"
 #include "advanced_crypt_dialog.h"
+#include "tls_attack_dialog.h"
 #include "detector.h"
 #include "basic.h"
 #include <sstream>
@@ -269,6 +270,16 @@ void MainWindow::setupUI() {
         AdvancedCryptDialog dlg(this);
         dlg.exec();
     });
+
+    QPushButton *detectBtn = new QPushButton("DETECT");
+    detectBtn->setFixedWidth(100);
+    detectBtn->setStyleSheet(
+        "QPushButton { background:#1a1030; color:#00cc88; border:1px solid #006644;"
+        "  border-radius:4px; padding:6px 12px; font-size:10px; font-weight:bold; }"
+        "QPushButton:hover { border-color:#4a7cff; color:#4a7cff; }"
+    );
+    topBar->addWidget(detectBtn);
+    connect(detectBtn, &QPushButton::clicked, this, &MainWindow::onDetectCipher);
 
     mainLayout->addLayout(topBar);
 
@@ -577,6 +588,11 @@ void MainWindow::setupUI() {
     QPushButton *bruteCtfBtn = new QPushButton("LAUNCH CTF ATTACK SEARCH");
     bruteCtfBtn->setStyleSheet("background: #00aa77; font-weight: bold;");
     ctfLeft->addWidget(bruteCtfBtn);
+
+    QPushButton *tlsAttackBtn = new QPushButton("TLS / SSL ATTACK PANEL");
+    tlsAttackBtn->setStyleSheet("background: #4a7cff; font-weight: bold; margin-top:4px;");
+    ctfLeft->addWidget(tlsAttackBtn);
+
     ctfLayout->addWidget(ctfGroup, 2);
     
     QGroupBox *ctfResGroup = new QGroupBox("Identified Candidates");
@@ -623,6 +639,7 @@ void MainWindow::setupUI() {
     connect(m_recipeList, &QListWidget::itemSelectionChanged, this, &MainWindow::onRecipeItemSelectionChanged);
     connect(m_encodingWheel, SIGNAL(baseSelected(int)), this, SLOT(onWheelBaseSelected(int)));
     connect(bruteCtfBtn, &QPushButton::clicked, this, &MainWindow::onRunCtfSearch);
+    connect(tlsAttackBtn, &QPushButton::clicked, this, &MainWindow::onRunTlsAttack);
 
     // Setup initial empty recipe layout
     updateRecipeCanvas();
@@ -1126,6 +1143,18 @@ void MainWindow::onTemplateSelected(int index) {
     onRunRecipe();
 }
 
+void MainWindow::onRunTlsAttack() {
+    TlsAttackDialog *dlg = new TlsAttackDialog(this);
+    connect(dlg, &TlsAttackDialog::rsaParamsExtracted, this, [this](const QString &mod, const QString &exp) {
+        m_ctfFlagRegex->setText("RSA: n=" + mod.left(48) + "... e=" + exp.left(8));
+        m_ctfResults->addItem("[RSA] Modulus: " + mod);
+        m_ctfResults->addItem("[RSA] Exponent: " + exp);
+        m_ctfMatchCount->setText("RSA parameters extracted — use ob-crypt rsa-wiener");
+    });
+    dlg->setModal(false);
+    dlg->show();
+}
+
 void MainWindow::onRunCtfSearch() {
     m_ctfResults->clear();
     std::string pattern = m_ctfFlagRegex->text().toStdString();
@@ -1191,6 +1220,44 @@ void MainWindow::runCtfDictionaryBrute(const std::string &input, const std::stri
 
 void MainWindow::onCtfFlagCheck() {
     // Checked inside CTF run search
+}
+
+void MainWindow::onDetectCipher() {
+    std::string input = m_inputEdit->toPlainText().toStdString();
+    if (input.empty()) {
+        QMessageBox::information(this, "Detect Cipher", "Enter text to analyze first.");
+        return;
+    }
+    auto results = detect_cipher(input, 8);
+    std::ostringstream oss;
+    oss << "=== Detection Results ===\n\n";
+    if (results.empty()) {
+        oss << "No cipher detected.\n";
+    } else {
+        for (auto &c : results) {
+            oss << "  [" << (int)(c.confidence * 100) << "%] " << c.cipher_name;
+            if (!c.key.empty()) oss << "  key: " << c.key;
+            oss << "\n";
+            if (!c.decrypted.empty()) {
+                std::string preview = c.decrypted.substr(0, 200);
+                if (c.decrypted.size() > 200) preview += "...";
+                oss << "    -> \"" << preview << "\"\n";
+            }
+        }
+        oss << "\n--- The top result has been loaded as output ---\n";
+    }
+    m_outputText->setPlainText(QString::fromStdString(oss.str()));
+    m_outputTabs->setCurrentIndex(0);
+    // Set the decoded text as output if a result exists
+    if (!results.empty() && !results[0].decrypted.empty())
+        m_outputText->setPlainText(QString::fromStdString(results[0].decrypted));
+    if (!results.empty()) {
+        std::ostringstream meta;
+        meta << "Detected: " << results[0].cipher_name
+             << " (" << (int)(results[0].confidence * 100) << "%)";
+        if (!results[0].key.empty()) meta << " key=" << results[0].key;
+        m_metricsLabel->setText(QString::fromStdString(meta.str()));
+    }
 }
 
 void MainWindow::onApplyMacro() {

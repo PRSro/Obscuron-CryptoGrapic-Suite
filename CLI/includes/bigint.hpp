@@ -37,6 +37,7 @@ public:
     static BigInt crt(const std::vector<BigInt>& remainders,
                       const std::vector<BigInt>& moduli);
     static BigInt from_hex(const std::string& hex);
+    static BigInt from_auto(const std::string& s);
     static BigInt from_bytes(const std::string& bytes);
 private:
     void trim();

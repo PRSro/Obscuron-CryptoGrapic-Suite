@@ -12,20 +12,33 @@ NTL_CLIENT
 
 // ── helpers ──
 
-static ZZ zz_from_hex(const std::string &s) {
-    std::string h = s;
-    if (h.size() >= 2 && h[0] == '0' && (h[1] == 'x' || h[1] == 'X'))
-        h = h.substr(2);
-    if (h.empty()) h = "0";
+static ZZ zz_from_hex_raw(const std::string &s) {
+    if (s.empty()) return ZZ::zero();
     ZZ r = ZZ::zero();
-    for (size_t i = 0; i < h.size(); i++) {
+    for (size_t i = 0; i < s.size(); i++) {
         r *= 16;
-        char c = h[i];
+        char c = s[i];
         if (c >= '0' && c <= '9')       r += (c - '0');
         else if (c >= 'a' && c <= 'f')  r += (c - 'a' + 10);
         else if (c >= 'A' && c <= 'F')  r += (c - 'A' + 10);
     }
     return r;
+}
+
+static ZZ zz_from_auto(const std::string &s) {
+    std::string h = s;
+    if (h.empty()) return ZZ::zero();
+    if (h.size() >= 2 && h[0] == '0' && (h[1] == 'x' || h[1] == 'X'))
+        return zz_from_hex_raw(h.substr(2));
+    bool has_hex = false;
+    for (char c : h) {
+        if ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+            has_hex = true;
+            break;
+        }
+    }
+    if (has_hex) return zz_from_hex_raw(h);
+    return conv<ZZ>(h.c_str());
 }
 
 static std::string hex_from_zz(const ZZ &z) {
@@ -50,7 +63,7 @@ static ZZ zz_root(const ZZ &a, long e) {
         return ZZ(-1);
     }
     if (a <= 0) return (a == 0) ? ZZ(0) : ZZ(-1);
-    ZZ lo = 1, hi = a;
+    ZZ lo = ZZ(1); ZZ hi = a;
     while (lo < hi) {
         ZZ mid = (lo + hi + 1) / 2;
         ZZ p;
@@ -70,17 +83,13 @@ bool ntl_rsa_decrypt(const std::string &c_hex, const std::string &d_hex,
                      const std::string &n_hex, std::string &m_hex,
                      std::string &error_msg) {
     try {
-        ZZ c = zz_from_hex(c_hex);
-        ZZ d = zz_from_hex(d_hex);
-        ZZ n = zz_from_hex(n_hex);
+        ZZ c = zz_from_auto(c_hex);
+        ZZ d = zz_from_auto(d_hex);
+        ZZ n = zz_from_auto(n_hex);
         ZZ m;
         PowerMod(m, c, d, n);
         m_hex = hex_from_zz(m);
         return true;
-    } catch (NTL::Exception &e) {
-        error_msg = "NTL error in rsa_decrypt: ";
-        error_msg += e.what();
-        return false;
     } catch (std::exception &e) {
         error_msg = e.what();
         return false;
@@ -90,10 +99,11 @@ bool ntl_rsa_decrypt(const std::string &c_hex, const std::string &d_hex,
 // ── Wiener's continued-fraction attack ──
 
 bool ntl_rsa_wiener(const std::string &e_hex, const std::string &n_hex,
-                    std::string &d_hex, std::string &error_msg) {
+                    std::string &d_hex, std::string &p_hex, std::string &q_hex,
+                    std::string &error_msg) {
     try {
-        ZZ e = zz_from_hex(e_hex);
-        ZZ n = zz_from_hex(n_hex);
+        ZZ e = zz_from_auto(e_hex);
+        ZZ n = zz_from_auto(n_hex);
 
         std::vector<ZZ> cf;
         ZZ num = e, den = n, rem;
@@ -105,14 +115,14 @@ bool ntl_rsa_wiener(const std::string &e_hex, const std::string &n_hex,
             den = rem;
         }
 
-        ZZ h_prev2 = 0, h_prev1 = 1;
-        ZZ k_prev2 = 1, k_prev1 = 0;
+        ZZ h_prev2 = ZZ(0), h_prev1 = ZZ(1);
+        ZZ k_prev2 = ZZ(1), k_prev1 = ZZ(0);
 
         for (size_t i = 0; i < cf.size(); i++) {
             ZZ h = cf[i] * h_prev1 + h_prev2;
             ZZ k = cf[i] * k_prev1 + k_prev2;
 
-            if (k > 0 && k.IsOdd()) {
+            if (k > 0 && bit(k, 0) == 1) {
                 ZZ edm1 = e * k - 1;
                 if (h != 0 && edm1 % h == 0) {
                     ZZ phi = edm1 / h;
@@ -124,6 +134,12 @@ bool ntl_rsa_wiener(const std::string &e_hex, const std::string &n_hex,
                             SqrRoot(sd, disc);
                             if (sd * sd == disc) {
                                 d_hex = hex_from_zz(k);
+                                ZZ p = (sum_pq - sd) / 2;
+                                ZZ q = (sum_pq + sd) / 2;
+                                if (p * q == n) {
+                                    p_hex = hex_from_zz(p);
+                                    q_hex = hex_from_zz(q);
+                                }
                                 return true;
                             }
                         }
@@ -138,10 +154,6 @@ bool ntl_rsa_wiener(const std::string &e_hex, const std::string &n_hex,
         }
 
         error_msg = "Wiener attack failed: no suitable convergent";
-        return false;
-    } catch (NTL::Exception &e) {
-        error_msg = "NTL error in Wiener: ";
-        error_msg += e.what();
         return false;
     } catch (std::exception &e) {
         error_msg = e.what();
@@ -163,14 +175,14 @@ bool ntl_rsa_hastad(const std::vector<std::string> &c_hex_list,
 
         std::vector<ZZ> c_list, n_list;
         for (size_t i = 0; i < k; i++) {
-            c_list.push_back(zz_from_hex(c_hex_list[i]));
-            n_list.push_back(zz_from_hex(n_hex_list[i]));
+            c_list.push_back(zz_from_auto(c_hex_list[i]));
+            n_list.push_back(zz_from_auto(n_hex_list[i]));
         }
 
-        ZZ N = 1;
+        ZZ N = ZZ(1);
         for (size_t i = 0; i < k; i++) N *= n_list[i];
 
-        ZZ result = 0;
+        ZZ result = ZZ(0);
         for (size_t i = 0; i < k; i++) {
             ZZ Ni = N / n_list[i];
             ZZ Mi;
@@ -187,10 +199,6 @@ bool ntl_rsa_hastad(const std::vector<std::string> &c_hex_list,
 
         m_hex = hex_from_zz(m);
         return true;
-    } catch (NTL::Exception &e) {
-        error_msg = "NTL error in Hastad: ";
-        error_msg += e.what();
-        return false;
     } catch (std::exception &e) {
         error_msg = e.what();
         return false;
@@ -205,12 +213,12 @@ bool ntl_ec_add(const std::string &x1_hex, const std::string &y1_hex,
                 std::string &xr_hex, std::string &yr_hex,
                 std::string &error_msg) {
     try {
-        ZZ x1 = zz_from_hex(x1_hex);
-        ZZ y1 = zz_from_hex(y1_hex);
-        ZZ x2 = zz_from_hex(x2_hex);
-        ZZ y2 = zz_from_hex(y2_hex);
-        ZZ a  = zz_from_hex(a_hex);
-        ZZ p  = zz_from_hex(p_hex);
+        ZZ x1 = zz_from_auto(x1_hex);
+        ZZ y1 = zz_from_auto(y1_hex);
+        ZZ x2 = zz_from_auto(x2_hex);
+        ZZ y2 = zz_from_auto(y2_hex);
+        ZZ a  = zz_from_auto(a_hex);
+        ZZ p  = zz_from_auto(p_hex);
 
         ZZ x3, y3, lam, num, den, den_inv;
 
@@ -244,10 +252,6 @@ bool ntl_ec_add(const std::string &x1_hex, const std::string &y1_hex,
         xr_hex = hex_from_zz(x3);
         yr_hex = hex_from_zz(y3);
         return true;
-    } catch (NTL::Exception &e) {
-        error_msg = "NTL error in ec_add: ";
-        error_msg += e.what();
-        return false;
     } catch (std::exception &e) {
         error_msg = e.what();
         return false;
@@ -262,13 +266,13 @@ bool ntl_ec_scalar_mul(const std::string &k_hex,
                        std::string &xr_hex, std::string &yr_hex,
                        std::string &error_msg) {
     try {
-        ZZ k  = zz_from_hex(k_hex);
-        ZZ xp = zz_from_hex(x_hex);
-        ZZ yp = zz_from_hex(y_hex);
-        ZZ a  = zz_from_hex(a_hex);
-        ZZ p  = zz_from_hex(p_hex);
+        ZZ k  = zz_from_auto(k_hex);
+        ZZ xp = zz_from_auto(x_hex);
+        ZZ yp = zz_from_auto(y_hex);
+        ZZ a  = zz_from_auto(a_hex);
+        ZZ p  = zz_from_auto(p_hex);
 
-        ZZ rx = 0, ry = 0;
+        ZZ rx = ZZ(0), ry = ZZ(0);
         bool inf = true;
 
         long bits = NumBits(k);
@@ -321,10 +325,6 @@ bool ntl_ec_scalar_mul(const std::string &k_hex,
         xr_hex = hex_from_zz(rx);
         yr_hex = hex_from_zz(ry);
         return true;
-    } catch (NTL::Exception &e) {
-        error_msg = "NTL error in ec_scalar_mul: ";
-        error_msg += e.what();
-        return false;
     } catch (std::exception &e) {
         error_msg = e.what();
         return false;
@@ -337,9 +337,9 @@ bool ntl_bsgs(const std::string &g_hex, const std::string &h_hex,
               const std::string &p_hex, std::string &x_hex,
               std::string &error_msg) {
     try {
-        ZZ g = zz_from_hex(g_hex);
-        ZZ h = zz_from_hex(h_hex);
-        ZZ p = zz_from_hex(p_hex);
+        ZZ g = zz_from_auto(g_hex);
+        ZZ h = zz_from_auto(h_hex);
+        ZZ p = zz_from_auto(p_hex);
         ZZ order = p - 1;
 
         ZZ m;
@@ -347,7 +347,7 @@ bool ntl_bsgs(const std::string &g_hex, const std::string &h_hex,
         m += 1;
 
         std::map<ZZ, long> baby;
-        ZZ cur = 1;
+        ZZ cur = ZZ(1);
         for (long j = 0; j < m; j++) {
             baby[cur] = j;
             cur = (cur * g) % p;
@@ -370,10 +370,6 @@ bool ntl_bsgs(const std::string &g_hex, const std::string &h_hex,
 
         error_msg = "BSGS: discrete log not found";
         return false;
-    } catch (NTL::Exception &e) {
-        error_msg = "NTL error in BSGS: ";
-        error_msg += e.what();
-        return false;
     } catch (std::exception &e) {
         error_msg = e.what();
         return false;
@@ -384,7 +380,7 @@ bool ntl_bsgs(const std::string &g_hex, const std::string &h_hex,
 
 static std::vector<std::pair<ZZ, long>> trial_factor(ZZ n, ZZ limit) {
     std::vector<std::pair<ZZ, long>> factors;
-    for (ZZ q = 2; q * q <= n && q <= limit; q++) {
+    for (ZZ q = ZZ(2); q * q <= n && q <= limit; q++) {
         if (n % q == 0) {
             long e = 0;
             while (n % q == 0) { n /= q; e++; }
@@ -401,7 +397,7 @@ static ZZ bsgs_small(const ZZ &g, const ZZ &h, const ZZ &p, const ZZ &bound) {
     m += 1;
 
     std::map<ZZ, long> baby;
-    ZZ cur = 1;
+    ZZ cur = ZZ(1);
     for (long j = 0; j < m; j++) {
         baby[cur] = j;
         cur = (cur * g) % p;
@@ -425,13 +421,13 @@ bool ntl_pohlig_hellman(const std::string &g_hex, const std::string &h_hex,
                         const std::string &p_hex, std::string &x_hex,
                         std::string &error_msg) {
     try {
-        ZZ g = zz_from_hex(g_hex);
-        ZZ h = zz_from_hex(h_hex);
-        ZZ p = zz_from_hex(p_hex);
+        ZZ g = zz_from_auto(g_hex);
+        ZZ h = zz_from_auto(h_hex);
+        ZZ p = zz_from_auto(p_hex);
         ZZ order = p - 1;
 
         std::vector<std::pair<ZZ, long>> factors = trial_factor(order, ZZ(1000000));
-        ZZ check = 1;
+        ZZ check = ZZ(1);
         for (auto &f : factors)
             for (long i = 0; i < f.second; i++)
                 check *= f.first;
@@ -464,7 +460,7 @@ bool ntl_pohlig_hellman(const std::string &g_hex, const std::string &h_hex,
             moduli.push_back(qe);
         }
 
-        ZZ result = 0, M = 1;
+        ZZ result = ZZ(0), M = ZZ(1);
         for (size_t i = 0; i < moduli.size(); i++) {
             ZZ Mi = M;
             ZZ Mi_inv;
@@ -476,10 +472,6 @@ bool ntl_pohlig_hellman(const std::string &g_hex, const std::string &h_hex,
 
         x_hex = hex_from_zz(result);
         return true;
-    } catch (NTL::Exception &e) {
-        error_msg = "NTL error in Pohlig-Hellman: ";
-        error_msg += e.what();
-        return false;
     } catch (std::exception &e) {
         error_msg = e.what();
         return false;
@@ -508,7 +500,7 @@ bool ntl_lll(const std::vector<std::vector<std::string>> &rows_hex,
         M.SetDims(rows, cols);
         for (long i = 0; i < rows; i++)
             for (long j = 0; j < cols; j++)
-                M[i][j] = zz_from_hex(rows_hex[i][j]);
+                M[i][j] = zz_from_auto(rows_hex[i][j]);
 
         LLL_FP(M);
 
@@ -521,10 +513,6 @@ bool ntl_lll(const std::vector<std::vector<std::string>> &rows_hex,
         }
 
         return true;
-    } catch (NTL::Exception &e) {
-        error_msg = "NTL error in LLL: ";
-        error_msg += e.what();
-        return false;
     } catch (std::exception &e) {
         error_msg = e.what();
         return false;

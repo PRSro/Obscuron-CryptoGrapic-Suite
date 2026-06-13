@@ -2,6 +2,7 @@
 #include "menuwindow.h"
 #include "colours.h"
 #include "advanced_number_dialog.h"
+#include "rsa_attack_dialog.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -19,6 +20,7 @@
 #include "basic_ciphers.h"
 #include "essential_ciphers.h"
 #include "bytes.h"
+#include "detector.h"
 
 NumberWindow::NumberWindow(QWidget *parent) : QMainWindow(parent) {
     setupUI();
@@ -126,10 +128,30 @@ void NumberWindow::setupUI() {
 
     connect(advancedBtn, &QPushButton::clicked, this, &NumberWindow::onAdvanced);
     
+    detectBtn = new QPushButton("DETECT BASE");
+    detectBtn->setFixedWidth(120);
+    detectBtn->setStyleSheet(
+        "QPushButton { background:#1a1030; color:#6b9cff; border:1px solid #2a2270;"
+        "  border-radius:4px; padding:10px 16px; font-size:11px; font-weight:bold; }"
+        "QPushButton:hover { border-color:#4a7cff; color:#4a7cff; background:#120a20; }"
+    );
+    ctrlRow->addWidget(detectBtn);
+    ctrlRow->addSpacing(12);
+
+    attackBtn = new QPushButton("ATTACK");
+    attackBtn->setFixedWidth(100);
+    attackBtn->setStyleSheet(
+        "QPushButton { background:#1a1030; color:#ff6b6b; border:1px solid #502020;"
+        "  border-radius:4px; padding:10px 16px; font-size:11px; font-weight:bold; }"
+        "QPushButton:hover { border-color:#ff4a4a; color:#ff4a4a; background:#120a20; }"
+    );
+    ctrlRow->addWidget(attackBtn);
 
     connect(typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &NumberWindow::onTypeChanged);
     connect(runBtn, &QPushButton::clicked, this, &NumberWindow::onRun);
+    connect(detectBtn, &QPushButton::clicked, this, &NumberWindow::onDetect);
+    connect(attackBtn, &QPushButton::clicked, this, &NumberWindow::onAttack);
     onTypeChanged(0);
 
     // ── Input ──
@@ -152,12 +174,21 @@ void NumberWindow::setupUI() {
 
     outputArea = new QPlainTextEdit(this);
     outputArea->setReadOnly(true);
-    outputArea->setMinimumHeight(140);
+    outputArea->setMinimumHeight(100);
     mainLayout->addWidget(outputArea, 1);
 
     connect(copyBtn, &QPushButton::clicked, this, [this]{
         QApplication::clipboard()->setText(outputArea->toPlainText());
     });
+
+    // ── Detect Output ──
+    QLabel *detLabel = new QLabel("Base Detection");
+    mainLayout->addWidget(detLabel);
+    detectOutput = new QPlainTextEdit(this);
+    detectOutput->setReadOnly(true);
+    detectOutput->setMaximumHeight(100);
+    detectOutput->setPlaceholderText("Click DETECT BASE to identify encoding...");
+    mainLayout->addWidget(detectOutput);
 
     setCentralWidget(central);
 }
@@ -196,7 +227,38 @@ void NumberWindow::onRun() {
     outputArea->setPlainText(QString::fromStdString(out));
 }
 
+void NumberWindow::onDetect() {
+    std::string input = inputArea->toPlainText().toStdString();
+    if (input.empty()) {
+        detectOutput->setPlainText("No input to analyze.");
+        return;
+    }
+    auto results = detect_base(input, 6);
+    std::ostringstream oss;
+    if (results.empty()) {
+        oss << "No base/encoding detected.\n";
+        oss << "Try plain text, hex, base64, binary, octal, or space-separated base-N values.\n";
+    } else {
+        for (auto &c : results) {
+            oss << "  " << (int)(c.confidence * 100) << "%  " << c.cipher_name;
+            if (!c.key.empty()) oss << "  key: " << c.key;
+            oss << "\n";
+            if (!c.decrypted.empty()) {
+                std::string preview = c.decrypted.substr(0, 120);
+                if (c.decrypted.size() > 120) preview += "...";
+                oss << "    \"" << preview << "\"\n";
+            }
+        }
+    }
+    detectOutput->setPlainText(QString::fromStdString(oss.str()));
+}
+
 void NumberWindow::onAdvanced() {
     AdvancedNumberDialog dlg(this);
+    dlg.exec();
+}
+
+void NumberWindow::onAttack() {
+    RsaAttackDialog dlg(this);
     dlg.exec();
 }

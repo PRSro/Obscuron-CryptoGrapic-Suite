@@ -153,11 +153,14 @@ std::pair<BigInt, BigInt> BigInt::divmod_internal(const BigInt& a, const BigInt&
         return r;
     };
 
-    std::vector<uint32_t> u = shl(abs_a.limbs, shift);
-    u.push_back(0);
     std::vector<uint32_t> v = shl(abs_b.limbs, shift);
-
+    while (!v.empty() && v.back() == 0) v.pop_back();
     int n = (int)v.size();
+
+    std::vector<uint32_t> u = shl(abs_a.limbs, shift);
+    while ((int)u.size() <= n) u.push_back(0);
+    u.push_back(0);
+
     int m = (int)u.size() - n - 1;
 
     std::vector<uint32_t> q_limbs(m + 1, 0);
@@ -288,6 +291,22 @@ BigInt BigInt::from_hex(const std::string& hex) {
     BigInt r(neg, limbs_vec);
     r.trim();
     return r;
+}
+
+BigInt BigInt::from_auto(const std::string& s) {
+    std::string h = s;
+    if (h.empty()) return BigInt();
+    if (h.size() >= 2 && h[0] == '0' && (h[1] == 'x' || h[1] == 'X'))
+        return from_hex(h.substr(2));
+    bool has_hex = false;
+    for (char c : h) {
+        if ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+            has_hex = true;
+            break;
+        }
+    }
+    if (has_hex) return from_hex(h);
+    return BigInt(h);
 }
 
 std::string BigInt::toHex() const {

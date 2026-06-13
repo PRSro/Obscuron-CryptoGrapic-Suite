@@ -1300,3 +1300,527 @@ bool lsb_embed(const std::string &carrier_data, const std::string &text_to_embed
     }
     return true;
 }
+
+// ── ASN.1 / DER helpers (static) ─────────────────────────────────
+
+struct Asn1Element {
+    uint8_t tag;
+    std::string value;
+    size_t total = 0;
+};
+
+static Asn1Element asn1_read(const std::string &der, size_t off) {
+    Asn1Element el;
+    if (off >= der.size()) return el;
+    el.tag = (uint8_t)der[off++];
+    el.total = 1;
+    if (off >= der.size()) { el.total = 0; return el; }
+    uint8_t len_byte = (uint8_t)der[off++];
+    el.total++;
+    size_t length = 0;
+    if (len_byte < 0x80) {
+        length = len_byte;
+    } else {
+        uint8_t num_bytes = len_byte & 0x7F;
+        if (num_bytes > 8 || off + num_bytes > der.size()) { el.total = 0; return el; }
+        for (uint8_t i = 0; i < num_bytes; i++) {
+            length = (length << 8) | (uint8_t)der[off++];
+            el.total++;
+        }
+    }
+    if (off + length > der.size()) { el.total = 0; return el; }
+    el.value = der.substr(off, length);
+    el.total += length;
+    return el;
+}
+
+static std::string oid_to_string(const std::string &o) {
+    if (o.empty()) return "";
+    std::string r;
+    uint8_t first = (uint8_t)o[0];
+    r = std::to_string(first / 40) + "." + std::to_string(first % 40);
+    uint64_t val = 0;
+    for (size_t i = 1; i < o.size(); i++) {
+        uint8_t b = (uint8_t)o[i];
+        val = (val << 7) | (b & 0x7F);
+        if (!(b & 0x80)) { r += "." + std::to_string(val); val = 0; }
+    }
+    return r;
+}
+
+static bool oid_match(const std::string &o, const std::string &dots) {
+    return oid_to_string(o) == dots;
+}
+
+static std::string parse_utf8_or_string(const std::string &v) {
+    return v;
+}
+
+static bool is_hex_string(const std::string &s) {
+    if (s.empty()) return false;
+    for (char c : s) if (!isxdigit((unsigned char)c) && c != ' ' && c != '\n' && c != '\r' && c != '\t') return false;
+    return true;
+}
+
+static std::string strip_spaces(const std::string &s) {
+    std::string r;
+    for (char c : s) if (c != ' ' && c != '\n' && c != '\r' && c != '\t') r += c;
+    return r;
+}
+
+// ── TLS Fingerprint ──────────────────────────────────────────────
+
+TlsFingerprint tls_fingerprint(const std::string &input) {
+    TlsFingerprint fp;
+    std::string data = input;
+
+    // If hex, decode
+    if (is_hex_string(data)) {
+        std::string cleaned = strip_spaces(data);
+        if (cleaned.size() % 2 == 0)
+            data = from_hex(cleaned);
+    }
+
+    // PEM detection
+    if (data.find("-----BEGIN ") != std::string::npos) {
+        fp.is_pem = true;
+        size_t nl = data.find('\n');
+        if (nl == std::string::npos) nl = data.find('\r');
+        std::string hdr = data.substr(0, nl);
+        if (hdr.find("CERTIFICATE") != std::string::npos) fp.version = "X.509 Certificate";
+        else if (hdr.find("RSA PRIVATE") != std::string::npos) { fp.version = "TLS Handshake (RSA Private Key)"; fp.key_exchange = "RSA"; }
+        else if (hdr.find("PRIVATE KEY") != std::string::npos) fp.version = "TLS Handshake (Private Key)";
+        std::string b64;
+        size_t bstart = data.find('\n', nl + 1);
+        if (bstart == std::string::npos) bstart = data.find('\r', nl + 1);
+        if (bstart != std::string::npos) {
+            size_t bend = data.rfind("-----");
+            if (bend != std::string::npos && bend > bstart) {
+                b64 = data.substr(bstart + 1, bend - bstart - 1);
+                b64 = strip_spaces(b64);
+                std::string der = base64_decode(b64);
+                if (!der.empty() && (uint8_t)der[0] == 0x30) {
+                    fp.is_der = true;
+                    if (der.size() > 20 && (uint8_t)der[10] == 0x00 && (uint8_t)der[11] == 0x02)
+                        fp.has_pkcs1_padding = true;
+                }
+            }
+        }
+        if (fp.key_exchange.empty()) fp.key_exchange = "RSA (PEM)";
+        fp.cipher = "N/A (key material)";
+        fp.key_bits = 0;
+        fp.mac = "N/A";
+        fp.risk_flags.push_back("key material exposed if compromised");
+        return fp;
+    }
+
+    // DER / raw ASN.1 detection
+    if (!data.empty() && (uint8_t)data[0] == 0x30) {
+        fp.is_der = true;
+        if (data.size() > 4 && (uint8_t)data[1] == 0x82) {
+            fp.version = "X.509 Certificate (DER)";
+            Asn1Element cert = asn1_read(data, 0);
+            if (cert.tag == 0x30 && !cert.value.empty()) {
+                Asn1Element tbs = asn1_read(cert.value, 0);
+                if (tbs.tag == 0x30) {
+                    size_t spki_off = 0;
+                    for (int i = 0; i < 4; i++) {
+                        Asn1Element e = asn1_read(tbs.value, spki_off);
+                        if (e.total == 0) break;
+                        spki_off += e.total;
+                    }
+                    Asn1Element validity = asn1_read(tbs.value, spki_off);
+                    if (validity.tag == 0x30) spki_off += validity.total;
+                    Asn1Element subject = asn1_read(tbs.value, spki_off);
+                    if (subject.tag == 0x30) spki_off += subject.total;
+                    Asn1Element spki = asn1_read(tbs.value, spki_off);
+                    if (spki.tag == 0x30 && !spki.value.empty()) {
+                        Asn1Element algo = asn1_read(spki.value, 0);
+                        if (algo.tag == 0x30 && !algo.value.empty()) {
+                            Asn1Element oid_el = asn1_read(algo.value, 0);
+                            std::string oid_str = oid_to_string(oid_el.value);
+                            if (oid_str == "1.2.840.113549.1.1.1") fp.key_exchange = "RSA";
+                            else if (oid_str == "1.2.840.10045.2.1") fp.key_exchange = "ECDHE";
+                            else if (oid_str == "1.3.101.112") { fp.key_exchange = "Ed25519"; fp.key_bits = 256; }
+                            if (fp.key_exchange == "ECDHE") {
+                                size_t ec_off = oid_el.total;
+                                Asn1Element curve_oid = asn1_read(algo.value, ec_off);
+                                if (curve_oid.tag == 0x06) {
+                                    std::string coid = oid_to_string(curve_oid.value);
+                                    if (coid == "1.2.840.10045.3.1.7") fp.key_bits = 256;
+                                    else if (coid == "1.3.132.0.34") fp.key_bits = 384;
+                                }
+                            }
+                        }
+                        size_t spki_inner = algo.total;
+                        Asn1Element pubkey_bit = asn1_read(spki.value, spki_inner);
+                        if (pubkey_bit.tag == 0x03 && !pubkey_bit.value.empty()) {
+                            std::string rsa_pub = pubkey_bit.value.substr(1);
+                            Asn1Element rsa_seq = asn1_read(rsa_pub, 0);
+                            if (rsa_seq.tag == 0x30 && !rsa_seq.value.empty()) {
+                                Asn1Element modulus = asn1_read(rsa_seq.value, 0);
+                                if (modulus.tag == 0x02 && !modulus.value.empty()) {
+                                    int bits = (int)modulus.value.size() * 8;
+                                    if (!modulus.value.empty() && (uint8_t)modulus.value[0] == 0)
+                                        bits = ((int)modulus.value.size() - 1) * 8;
+                                    fp.key_bits = bits;
+                                }
+                            }
+                        }
+                        if (fp.key_exchange.empty()) fp.key_exchange = "RSA";
+                        if (fp.key_bits == 0 && fp.key_exchange == "RSA") fp.key_bits = 2048;
+                        fp.cipher = "AES-256-CBC";
+                    }
+                    fp.mac = "SHA256";
+                    fp.risk_flags.push_back("CBC mode (POODLE/BEAST possible)");
+                }
+            }
+            if (fp.key_bits > 0 && fp.key_bits < 2048) fp.risk_flags.push_back("WEAK KEY SIZE");
+            if (fp.key_exchange.find("RSA") != std::string::npos)
+                fp.risk_flags.push_back("ROBOT (Bleichenbacher)");
+            fp.suggested_attack = "ob-crypt rsa-wiener -e <exponent_hex> -n <modulus_hex>";
+        } else if (data.size() > 6) {
+            fp.version = "DER (unknown structure)";
+        }
+        return fp;
+    }
+
+    // TLS record detection: ContentType 0x16 (Handshake) or 0x17 (App Data)
+    if (!data.empty()) {
+        uint8_t ct = (uint8_t)data[0];
+        if (ct == 0x16 || ct == 0x17) {
+            if (data.size() >= 3) {
+                uint8_t major = (uint8_t)data[1];
+                uint8_t minor = (uint8_t)data[2];
+                if (major == 0x03) {
+                    if (minor == 0x00) fp.version = "SSL 3.0";
+                    else if (minor == 0x01) fp.version = "TLS 1.0";
+                    else if (minor == 0x02) fp.version = "TLS 1.1";
+                    else if (minor == 0x03) fp.version = "TLS 1.2";
+                    else if (minor == 0x04) fp.version = "TLS 1.3";
+                    else fp.version = "TLS (0x03.0x" + to_hex(&minor, 1) + ")";
+                } else if (major == 0x02) {
+                    fp.version = "SSL 2.0";
+                } else {
+                    fp.version = "TLS record (0x" + to_hex(&major, 1) + ".0x" + to_hex(&minor, 1) + ")";
+                }
+            } else {
+                fp.version = "TLS Record";
+            }
+            fp.cipher = (ct == 0x16) ? "AES-256-CBC (client hello)" : "AES-256-CBC (encrypted)";
+            fp.key_exchange = "RSA (assumed)";
+            fp.key_bits = 2048;
+            fp.mac = "SHA256";
+            if (fp.version.find("SSL") != std::string::npos) {
+                fp.risk_flags.push_back("DROWN (SSLv2)");
+                fp.risk_flags.push_back("POODLE (SSLv3)");
+            }
+            if (fp.version.find("1.0") != std::string::npos || fp.version.find("1.1") != std::string::npos)
+                fp.risk_flags.push_back("BEAST (TLS <=1.0)");
+            fp.risk_flags.push_back("CBC mode (POODLE/BEAST possible)");
+            fp.suggested_attack = "ob-crypt rsa-wiener -e <e> -n <n>";
+            return fp;
+        }
+    }
+
+    if (fp.version.empty()) fp.version = "Unknown format";
+    return fp;
+}
+
+// ── OID table for X.509 parsing ──────────────────────────────────
+
+struct OidEntry { const char *dots; const char *label; };
+static const OidEntry OID_TABLE[] = {
+    {"2.5.4.3", "CN"},
+    {"2.5.4.4", "SN"},
+    {"2.5.4.5", "serialNumber"},
+    {"2.5.4.6", "C"},
+    {"2.5.4.7", "L"},
+    {"2.5.4.8", "ST"},
+    {"2.5.4.9", "STREET"},
+    {"2.5.4.10", "O"},
+    {"2.5.4.11", "OU"},
+    {"2.5.4.12", "title"},
+    {"2.5.4.17", "postalCode"},
+    {"2.5.4.42", "GN"},
+    {"2.5.4.43", "initials"},
+    {"1.2.840.113549.1.9.1", "emailAddress"},
+    {"1.2.840.113549.1.1.1", "RSA"},
+    {"1.2.840.10045.2.1", "EC"},
+    {"1.2.840.113549.1.1.5", "sha1WithRSA"},
+    {"1.2.840.113549.1.1.11", "sha256WithRSA"},
+    {"1.2.840.113549.1.1.12", "sha384WithRSA"},
+    {"1.2.840.113549.1.1.13", "sha512WithRSA"},
+    {"1.2.840.10045.4.3.2", "ecdsaWithSHA256"},
+    {"1.2.840.10045.4.3.3", "ecdsaWithSHA384"},
+    {"1.3.101.112", "ed25519"},
+    {"1.3.101.113", "ed448"},
+    {"2.5.29.15", "Key Usage"},
+    {"2.5.29.17", "Subject Alt Name"},
+    {"2.5.29.19", "Basic Constraints"},
+    {"2.5.29.37", "Extended Key Usage"},
+    {"2.5.29.14", "Subject Key Identifier"},
+    {"2.5.29.35", "Authority Key Identifier"},
+    {nullptr, nullptr}
+};
+
+static std::string oid_lookup(const std::string &oid_bytes) {
+    std::string dots = oid_to_string(oid_bytes);
+    for (int i = 0; OID_TABLE[i].dots != nullptr; i++) {
+        if (dots == OID_TABLE[i].dots) return OID_TABLE[i].label;
+    }
+    return dots;
+}
+
+// ── ASN.1 time helpers ───────────────────────────────────────────
+
+static std::string parse_utctime(const std::string &v) {
+    if (v.size() < 11) return v;
+    int yy = std::stoi(v.substr(0, 2));
+    if (yy < 50) yy += 2000; else yy += 1900;
+    return std::to_string(yy) + "-" + v.substr(2, 2) + "-" + v.substr(4, 2) + " " +
+           v.substr(6, 2) + ":" + v.substr(8, 2) + ":" + v.substr(10, 2) + " UTC";
+}
+
+static std::string parse_generalized_time(const std::string &v) {
+    if (v.size() < 13) return v;
+    return v.substr(0, 4) + "-" + v.substr(4, 2) + "-" + v.substr(6, 2) + " " +
+           v.substr(8, 2) + ":" + v.substr(10, 2) + ":" + v.substr(12, 2) + " UTC";
+}
+
+// ── Certificate Parser ───────────────────────────────────────────
+
+static void parse_rdn_sequence(const std::string &seq_val, std::string &cn, std::string &o, std::string &ou) {
+    size_t off = 0;
+    while (off < seq_val.size()) {
+        Asn1Element rdn_set = asn1_read(seq_val, off);
+        if (rdn_set.total == 0) break;
+        off += rdn_set.total;
+        size_t soff = 0;
+        while (soff < rdn_set.value.size()) {
+            Asn1Element attr_seq = asn1_read(rdn_set.value, soff);
+            if (attr_seq.total == 0) break;
+            soff += attr_seq.total;
+            if (attr_seq.tag == 0x30) {
+                Asn1Element oid_el = asn1_read(attr_seq.value, 0);
+                if (oid_el.tag == 0x06) {
+                    std::string label = oid_lookup(oid_el.value);
+                    size_t val_off = oid_el.total;
+                    Asn1Element val_el = asn1_read(attr_seq.value, val_off);
+                    std::string str_val = parse_utf8_or_string(val_el.value);
+                    if (label == "CN") { if (cn.empty()) cn = str_val; }
+                    else if (label == "O") { if (o.empty()) o = str_val; }
+                    else if (label == "OU") { if (ou.empty()) ou = str_val; }
+                }
+            }
+        }
+    }
+}
+
+static std::string parse_name(const std::string &seq_val) {
+    std::string cn, o, ou;
+    parse_rdn_sequence(seq_val, cn, o, ou);
+    std::string r;
+    if (!cn.empty()) r += "CN=" + cn;
+    if (!o.empty()) { if (!r.empty()) r += ", "; r += "O=" + o; }
+    if (!ou.empty()) { if (!r.empty()) r += ", "; r += "OU=" + ou; }
+    return r.empty() ? "(unable to parse)" : r;
+}
+
+CertInfo parse_certificate(const std::string &pem_or_hex) {
+    CertInfo ci;
+    std::string der;
+    std::string input = pem_or_hex;
+
+    if (input.find("-----BEGIN ") != std::string::npos) {
+        size_t bstart = input.find('\n');
+        if (bstart == std::string::npos) { bstart = input.find('\r'); if (bstart == std::string::npos) return ci; }
+        bstart = input.find('\n', bstart + 1);
+        if (bstart == std::string::npos) { bstart = input.find('\r', bstart); if (bstart == std::string::npos) return ci; }
+        size_t bend = input.rfind("-----");
+        if (bend == std::string::npos || bend <= bstart) return ci;
+        std::string b64 = strip_spaces(input.substr(bstart + 1, bend - bstart - 1));
+        der = base64_decode(b64);
+    } else if (is_hex_string(input)) {
+        std::string cleaned = strip_spaces(input);
+        if (cleaned.size() % 2 == 0)
+            der = from_hex(cleaned);
+    } else {
+        der = input;
+    }
+
+    if (der.empty() || (uint8_t)der[0] != 0x30) return ci;
+
+    Asn1Element cert = asn1_read(der, 0);
+    if (cert.tag != 0x30 || cert.value.empty()) return ci;
+
+    Asn1Element tbs = asn1_read(cert.value, 0);
+    if (tbs.tag != 0x30 || tbs.value.empty()) return ci;
+
+    size_t off = 0;
+
+    // [0] Version
+    Asn1Element ver_el = asn1_read(tbs.value, off);
+    if (ver_el.tag == 0xA0) off += ver_el.total;
+
+    // Serial number
+    Asn1Element serial = asn1_read(tbs.value, off);
+    if (serial.tag == 0x02) {
+        ci.serial_hex = to_hex((const unsigned char*)serial.value.data(), serial.value.size());
+        off += serial.total;
+    }
+
+    // Signature algorithm
+    Asn1Element sig_algo = asn1_read(tbs.value, off);
+    if (sig_algo.tag == 0x30) off += sig_algo.total;
+
+    // Issuer
+    Asn1Element issuer_seq = asn1_read(tbs.value, off);
+    if (issuer_seq.tag == 0x30) {
+        ci.issuer = parse_name(issuer_seq.value);
+        off += issuer_seq.total;
+    }
+
+    // Validity
+    Asn1Element validity = asn1_read(tbs.value, off);
+    if (validity.tag == 0x30) {
+        size_t v_off = 0;
+        Asn1Element not_before = asn1_read(validity.value, v_off);
+        if (not_before.tag == 0x17) ci.valid_from = parse_utctime(not_before.value);
+        else if (not_before.tag == 0x18) ci.valid_from = parse_generalized_time(not_before.value);
+        v_off += not_before.total;
+        Asn1Element not_after = asn1_read(validity.value, v_off);
+        if (not_after.tag == 0x17) ci.valid_until = parse_utctime(not_after.value);
+        else if (not_after.tag == 0x18) ci.valid_until = parse_generalized_time(not_after.value);
+        off += validity.total;
+    }
+
+    // Subject
+    Asn1Element subject_seq = asn1_read(tbs.value, off);
+    if (subject_seq.tag == 0x30) {
+        std::string cn, o, ou;
+        parse_rdn_sequence(subject_seq.value, cn, o, ou);
+        ci.subject_cn = cn;
+        ci.subject_o = o;
+        off += subject_seq.total;
+    }
+
+    // SubjectPublicKeyInfo
+    Asn1Element spki = asn1_read(tbs.value, off);
+    if (spki.tag == 0x30 && !spki.value.empty()) {
+        size_t spki_off = 0;
+        Asn1Element algo_seq = asn1_read(spki.value, spki_off);
+        if (algo_seq.tag == 0x30 && !algo_seq.value.empty()) {
+            Asn1Element pk_oid = asn1_read(algo_seq.value, 0);
+            if (pk_oid.tag == 0x06) {
+                std::string pk_label = oid_lookup(pk_oid.value);
+                if (pk_label == "RSA") ci.pubkey_algo = "RSA";
+                else if (pk_label == "EC") ci.pubkey_algo = "EC";
+                else if (pk_label == "ed25519") ci.pubkey_algo = "Ed25519";
+                else ci.pubkey_algo = pk_label;
+            }
+            if (ci.pubkey_algo == "EC") {
+                size_t ec_off = pk_oid.total;
+                Asn1Element curve_oid = asn1_read(algo_seq.value, ec_off);
+                if (curve_oid.tag == 0x06) {
+                    std::string coid = oid_to_string(curve_oid.value);
+                    if (coid == "1.2.840.10045.3.1.7") ci.pubkey_bits = 256;
+                    else if (coid == "1.3.132.0.34") ci.pubkey_bits = 384;
+                    else ci.pubkey_bits = 256;
+                }
+            }
+            spki_off += algo_seq.total;
+        }
+        Asn1Element pub_bit = asn1_read(spki.value, spki_off);
+        if (pub_bit.tag == 0x03 && !pub_bit.value.empty()) {
+            std::string rsa_pub = pub_bit.value.substr(1);
+            if (ci.pubkey_algo == "RSA") {
+                Asn1Element rsa_seq = asn1_read(rsa_pub, 0);
+                if (rsa_seq.tag == 0x30 && !rsa_seq.value.empty()) {
+                    Asn1Element mod = asn1_read(rsa_seq.value, 0);
+                    if (mod.tag == 0x02) {
+                        ci.modulus_hex = to_hex((const unsigned char*)mod.value.data(), mod.value.size());
+                        int bits = (int)mod.value.size() * 8;
+                        if (!mod.value.empty() && (uint8_t)mod.value[0] == 0)
+                            bits = ((int)mod.value.size() - 1) * 8;
+                        ci.pubkey_bits = bits;
+                        size_t exp_off = mod.total;
+                        Asn1Element exp = asn1_read(rsa_seq.value, exp_off);
+                        if (exp.tag == 0x02)
+                            ci.exponent_hex = to_hex((const unsigned char*)exp.value.data(), exp.value.size());
+                    }
+                }
+            } else if (ci.pubkey_algo == "EC" && ci.pubkey_bits == 0) {
+                ci.pubkey_bits = (int)rsa_pub.size() >= 32 ? 256 : 192;
+            } else if (ci.pubkey_algo == "Ed25519") {
+                ci.pubkey_bits = 256;
+            }
+        }
+        off += spki.total;
+    }
+
+    // Extensions [3]
+    Asn1Element ext_el = asn1_read(tbs.value, off);
+    if (ext_el.tag == 0xA3 && !ext_el.value.empty()) {
+        Asn1Element ext_seq = asn1_read(ext_el.value, 0);
+        if (ext_seq.tag == 0x30) {
+            size_t e_off = 0;
+            while (e_off < ext_seq.value.size()) {
+                Asn1Element ext = asn1_read(ext_seq.value, e_off);
+                if (ext.total == 0) break;
+                e_off += ext.total;
+                if (ext.tag == 0x30 && ext.value.size() >= 2) {
+                    Asn1Element ext_oid = asn1_read(ext.value, 0);
+                    if (ext_oid.tag == 0x06) {
+                        std::string ext_label = oid_lookup(ext_oid.value);
+                        size_t v_off = ext_oid.total;
+                        Asn1Element maybe_crit = asn1_read(ext.value, v_off);
+                        if (maybe_crit.tag == 0x01) v_off += maybe_crit.total;
+                        Asn1Element ext_val = asn1_read(ext.value, v_off);
+                        if (ext_val.tag == 0x04 && !ext_val.value.empty()) {
+                            if (ext_label == "Subject Alt Name") {
+                                size_t san_off = 0;
+                                while (san_off < ext_val.value.size()) {
+                                    Asn1Element san = asn1_read(ext_val.value, san_off);
+                                    if (san.total == 0) break;
+                                    san_off += san.total;
+                                    if (san.tag == 0x82) ci.san_entries.push_back(san.value);
+                                    else if (san.tag == 0x87) {
+                                        std::string ip;
+                                        for (unsigned char c : san.value) {
+                                            if (!ip.empty()) ip += ".";
+                                            ip += std::to_string((int)c);
+                                        }
+                                        ci.san_entries.push_back(ip);
+                                    }
+                                }
+                            } else if (ext_label == "Key Usage") {
+                                if (!ext_val.value.empty()) {
+                                    uint8_t ku = (uint8_t)ext_val.value[0];
+                                    if (ku & 0x80) ci.key_usage.push_back("digitalSignature");
+                                    if (ku & 0x40) ci.key_usage.push_back("nonRepudiation");
+                                    if (ku & 0x20) ci.key_usage.push_back("keyEncipherment");
+                                    if (ku & 0x10) ci.key_usage.push_back("dataEncipherment");
+                                    if (ku & 0x08) ci.key_usage.push_back("keyAgreement");
+                                    if (ku & 0x04) ci.key_usage.push_back("keyCertSign");
+                                    if (ku & 0x02) ci.key_usage.push_back("cRLSign");
+                                    if (ku & 0x01) ci.key_usage.push_back("encipherOnly");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // SHA-256 fingerprint
+    if (!der.empty()) {
+        std::string hash_out;
+        sha256_hash(der, hash_out);
+        ci.sha256_fingerprint = to_hex((const unsigned char*)hash_out.data(), hash_out.size());
+    }
+
+    ci.is_self_signed = (ci.issuer.find(ci.subject_cn) != std::string::npos && !ci.subject_cn.empty());
+    return ci;
+}

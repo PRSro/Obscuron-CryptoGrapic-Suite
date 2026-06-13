@@ -25,12 +25,18 @@ private:
     QPushButton *backBtn;
     QPushButton *advancedBtn;
 
+    QPlainTextEdit *detectOutput;
+    QPushButton *detectBtn;
+    QPushButton *attackBtn;
+
     void setupUI();
 
 private slots:
     void onRun();
     void onTypeChanged(int index);
     void onAdvanced();
+    void onDetect();
+    void onAttack();
 };
 
 #endif
